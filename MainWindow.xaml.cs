@@ -64,6 +64,12 @@ namespace MetropolisHUD
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool BringWindowToTop(IntPtr hWnd);
+
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TRANSPARENT = 0x00000020;
         private const int WS_EX_LAYERED = 0x00080000;
@@ -151,6 +157,17 @@ namespace MetropolisHUD
 
             RegisterHotKey(handle, HOTKEY_ID_WIN_H, MOD_WIN, VK_H);
             RegisterHotKey(handle, HOTKEY_ID_CTRL_SHIFT_H, MOD_CONTROL | MOD_SHIFT, VK_H);
+
+            // Force Window to Foreground & Topmost
+            Topmost = true;
+            Activate();
+            Focus();
+            try
+            {
+                SetForegroundWindow(handle);
+                BringWindowToTop(handle);
+            }
+            catch { }
 
             // Init System Tray
             InitSystemTray();
