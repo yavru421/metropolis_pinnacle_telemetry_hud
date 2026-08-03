@@ -1,0 +1,13 @@
+{
+  "name": "hud-mcp-server",
+  "version": "1.0.0",
+  "description": "Metropolis Telemetry HUD MCP Sidecar Server",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1"
+  }
+}

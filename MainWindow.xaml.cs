@@ -259,7 +259,7 @@ namespace MetropolisHUD
                     using var pipeServer = new NamedPipeServerStream(
                         PipeName,
                         PipeDirection.In,
-                        NamedPipeServerStream.MaxAllowedServerInstances,
+                        1,
                         PipeTransmissionMode.Byte,
                         PipeOptions.Asynchronous);
 
