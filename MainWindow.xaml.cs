@@ -92,6 +92,9 @@ namespace MetropolisHUD
         private DateTime _lastSignalMtime = DateTime.MinValue;
         private DateTime _lastDuckDbMtime = DateTime.MinValue;
         private DateTime _lastAgentsMtime = DateTime.MinValue;
+        private DateTime _lastGitMtime = DateTime.MinValue;
+        private DateTime _lastDotnetMtime = DateTime.MinValue;
+        private DateTime _lastPythonMtime = DateTime.MinValue;
 
         // Brushes
         private readonly SolidColorBrush _brushOff     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#45475A"));
@@ -404,10 +407,61 @@ namespace MetropolisHUD
                     }
                 }
 
+                // 4. Host System Activity Watchers (Git, .NET, Python/Conda)
+                CheckSystemWatchers();
+
                 // Update Sparkline Pulse Meter
                 UpdateSparklinePulse();
             }
             catch { }
+        }
+
+        private void CheckSystemWatchers()
+        {
+            // 1. Git Repository HEAD Watcher
+            string gitHead = @"C:\dev\MetropolisHUD\.git\HEAD";
+            if (File.Exists(gitHead))
+            {
+                var fi = new FileInfo(gitHead);
+                if (fi.LastWriteTime > _lastGitMtime)
+                {
+                    if (_lastGitMtime != DateTime.MinValue)
+                    {
+                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[GIT WATCHER] Git repository state / HEAD commit update detected");
+                    }
+                    _lastGitMtime = fi.LastWriteTime;
+                }
+            }
+
+            // 2. .NET Build Output Watcher
+            string dotnetDll = @"C:\dev\MetropolisHUD\bin\Debug\net10.0-windows\MetropolisHUD.dll";
+            if (File.Exists(dotnetDll))
+            {
+                var fi = new FileInfo(dotnetDll);
+                if (fi.LastWriteTime > _lastDotnetMtime)
+                {
+                    if (_lastDotnetMtime != DateTime.MinValue)
+                    {
+                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[.NET WATCHER] .NET Assembly compilation target updated (MetropolisHUD.dll)");
+                    }
+                    _lastDotnetMtime = fi.LastWriteTime;
+                }
+            }
+
+            // 3. Python / Conda Telemetry Watcher
+            string pyTestFile = @"C:\dev\MetropolisHUD\test_pipe.py";
+            if (File.Exists(pyTestFile))
+            {
+                var fi = new FileInfo(pyTestFile);
+                if (fi.LastWriteTime > _lastPythonMtime)
+                {
+                    if (_lastPythonMtime != DateTime.MinValue)
+                    {
+                        TriggerChannel("SKILLS", DateTime.Now.ToString("HH:mm:ss"), "[PYTHON WATCHER] Python script / Conda environment execution detected");
+                    }
+                    _lastPythonMtime = fi.LastWriteTime;
+                }
+            }
         }
 
         public void TriggerChannel(string channel, string time, string detail)
