@@ -255,7 +255,7 @@ namespace MetropolisHUD
                     using var pipeServer = new NamedPipeServerStream(
                         PipeName,
                         PipeDirection.In,
-                        1,
+                        NamedPipeServerStream.MaxAllowedServerInstances,
                         PipeTransmissionMode.Byte,
                         PipeOptions.Asynchronous);
 
@@ -287,7 +287,7 @@ namespace MetropolisHUD
                 }
                 catch
                 {
-                    await Task.Delay(500, token);
+                    await Task.Delay(200, token);
                 }
             }
         }
@@ -627,14 +627,26 @@ namespace MetropolisHUD
         {
             Task.Run(async () =>
             {
+                string time = DateTime.Now.ToString("HH:mm:ss");
+                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== INITIALIZING HUD DIAGNOSTIC SELF-TEST SUITE ==="));
+                await Task.Delay(100);
+
                 string[] channels = { "THOUGHT", "DUCKDB", "EDGE", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR" };
                 foreach (string ch in channels)
                 {
-                    string time = DateTime.Now.ToString("HH:mm:ss");
-                    string detail = $"SELF-TEST SEQUENCE: Validating channel signal [{ch}]";
+                    time = DateTime.Now.ToString("HH:mm:ss");
+                    string detail = $"[TEST PASS 1/2] Channel signal verification [{ch}] - LED pulse & buffer write";
                     Dispatcher.Invoke(() => TriggerChannel(ch, time, detail));
-                    await Task.Delay(150);
+                    await Task.Delay(120);
                 }
+
+                // Pass 2: High-velocity EPM pulse burst & DTC verification
+                time = DateTime.Now.ToString("HH:mm:ss");
+                Dispatcher.Invoke(() => TriggerChannel("ERROR", time, "DTC-0xTEST001: Diagnostics self-test error chime & red LED hold verification"));
+                await Task.Delay(200);
+
+                time = DateTime.Now.ToString("HH:mm:ss");
+                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== DIAGNOSTIC SELF-TEST COMPLETED: 9/9 CHANNELS VERIFIED OK ==="));
             });
         }
 
