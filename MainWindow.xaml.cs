@@ -95,6 +95,7 @@ namespace MetropolisHUD
         private DateTime _lastGitMtime = DateTime.MinValue;
         private DateTime _lastDotnetMtime = DateTime.MinValue;
         private DateTime _lastPythonMtime = DateTime.MinValue;
+        private long _lastHistoryPosition = 0;
 
         // Brushes
         private readonly SolidColorBrush _brushOff     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#45475A"));
@@ -276,11 +277,11 @@ namespace MetropolisHUD
                             string detail  = root.GetProperty("detail").GetString() ?? "";
                             string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
 
-                            Dispatcher.Invoke(() => TriggerChannel(channel, time, detail));
+                            Dispatcher.Invoke(() => TriggerChannel(channel, time, detail, appendToHistory: true));
                         }
                         catch
                         {
-                            Dispatcher.Invoke(() => TriggerChannel("MCP", DateTime.Now.ToString("HH:mm:ss"), line));
+                            Dispatcher.Invoke(() => TriggerChannel("MCP", DateTime.Now.ToString("HH:mm:ss"), line, appendToHistory: true));
                         }
                     }
                 }
@@ -301,6 +302,9 @@ namespace MetropolisHUD
             {
                 if (File.Exists(HistoryFile))
                 {
+                    var fi = new FileInfo(HistoryFile);
+                    _lastHistoryPosition = fi.Length;
+
                     string[] lines = File.ReadAllLines(HistoryFile);
                     int start = Math.Max(0, lines.Length - 100);
                     for (int i = start; i < lines.Length; i++)
@@ -320,7 +324,6 @@ namespace MetropolisHUD
 
         private void ParseAndAddLogEntry(string rawLine)
         {
-            // Format: [19:17:16] ERROR: DTC-0xDEAD404: ...
             string time = DateTime.Now.ToString("HH:mm:ss");
             string channel = "THOUGHT";
             string detail = rawLine;
@@ -345,6 +348,60 @@ namespace MetropolisHUD
             }
         }
 
+        private void CheckHistoryLogStream()
+        {
+            try
+            {
+                if (File.Exists(HistoryFile))
+                {
+                    var fi = new FileInfo(HistoryFile);
+                    if (fi.Length < _lastHistoryPosition)
+                    {
+                        _lastHistoryPosition = 0;
+                    }
+
+                    if (fi.Length > _lastHistoryPosition)
+                    {
+                        using var stream = new FileStream(HistoryFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                        stream.Position = _lastHistoryPosition;
+                        using var reader = new StreamReader(stream, Encoding.UTF8);
+                        string? line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            if (!string.IsNullOrWhiteSpace(line))
+                            {
+                                ParseAndTriggerLogLine(line);
+                            }
+                        }
+                        _lastHistoryPosition = stream.Position;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void ParseAndTriggerLogLine(string rawLine)
+        {
+            string time = DateTime.Now.ToString("HH:mm:ss");
+            string channel = "THOUGHT";
+            string detail = rawLine;
+
+            int firstBracketClose = rawLine.IndexOf(']');
+            if (firstBracketClose > 1 && rawLine.StartsWith("["))
+            {
+                time = rawLine.Substring(1, firstBracketClose - 1);
+                string rest = rawLine.Substring(firstBracketClose + 1).Trim();
+                int colonIdx = rest.IndexOf(':');
+                if (colonIdx > 0)
+                {
+                    channel = rest.Substring(0, colonIdx).Trim().ToUpper();
+                    detail = rest.Substring(colonIdx + 1).Trim();
+                }
+            }
+
+            TriggerChannel(channel, time, detail, appendToHistory: false);
+        }
+
         private void Timer_Tick(object? sender, EventArgs e)
         {
             try
@@ -360,7 +417,10 @@ namespace MetropolisHUD
                 if (_searchTicks > 0)  { _searchTicks--;  if (_searchTicks == 0)  LedSearch.Fill  = _brushOff; }
                 if (_errorTicks > 0)   { _errorTicks--;   if (_errorTicks == 0)   LedError.Fill   = _brushOff; }
 
-                // 1. Check Signal JSON Bus
+                // 1. Check Append-Only History Stream
+                CheckHistoryLogStream();
+
+                // 2. Check Signal JSON Bus (legacy compatibility)
                 if (File.Exists(SignalFile))
                 {
                     var fi = new FileInfo(SignalFile);
@@ -375,11 +435,11 @@ namespace MetropolisHUD
                         string detail  = root.GetProperty("detail").GetString() ?? "";
                         string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
 
-                        TriggerChannel(channel, time, detail);
+                        TriggerChannel(channel, time, detail, appendToHistory: true);
                     }
                 }
 
-                // 2. Check DuckDB mtime
+                // 3. Check DuckDB mtime
                 if (File.Exists(MindDbFile))
                 {
                     var fi = new FileInfo(MindDbFile);
@@ -387,13 +447,13 @@ namespace MetropolisHUD
                     {
                         if (_lastDuckDbMtime != DateTime.MinValue)
                         {
-                            TriggerChannel("DUCKDB", DateTime.Now.ToString("HH:mm:ss"), "mind.duckdb query/write event");
+                            TriggerChannel("DUCKDB", DateTime.Now.ToString("HH:mm:ss"), "mind.duckdb query/write event", appendToHistory: true);
                         }
                         _lastDuckDbMtime = fi.LastWriteTime;
                     }
                 }
 
-                // 3. Check AGENTS.md mtime
+                // 4. Check AGENTS.md mtime
                 if (File.Exists(AgentsFile))
                 {
                     var fi = new FileInfo(AgentsFile);
@@ -401,13 +461,13 @@ namespace MetropolisHUD
                     {
                         if (_lastAgentsMtime != DateTime.MinValue)
                         {
-                            TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "AGENTS.md invariant updated");
+                            TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "AGENTS.md invariant updated", appendToHistory: true);
                         }
                         _lastAgentsMtime = fi.LastWriteTime;
                     }
                 }
 
-                // 4. Host System Activity Watchers (Git, .NET, Python/Conda)
+                // 5. Host System Activity Watchers (Git, .NET, Python/Conda)
                 CheckSystemWatchers();
 
                 // Update Sparkline Pulse Meter
@@ -427,7 +487,7 @@ namespace MetropolisHUD
                 {
                     if (_lastGitMtime != DateTime.MinValue)
                     {
-                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[GIT WATCHER] Git repository state / HEAD commit update detected");
+                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[GIT WATCHER] Git repository state / HEAD commit update detected", appendToHistory: true);
                     }
                     _lastGitMtime = fi.LastWriteTime;
                 }
@@ -442,7 +502,7 @@ namespace MetropolisHUD
                 {
                     if (_lastDotnetMtime != DateTime.MinValue)
                     {
-                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[.NET WATCHER] .NET Assembly compilation target updated (MetropolisHUD.dll)");
+                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[.NET WATCHER] .NET Assembly compilation target updated (MetropolisHUD.dll)", appendToHistory: true);
                     }
                     _lastDotnetMtime = fi.LastWriteTime;
                 }
@@ -457,14 +517,14 @@ namespace MetropolisHUD
                 {
                     if (_lastPythonMtime != DateTime.MinValue)
                     {
-                        TriggerChannel("SKILLS", DateTime.Now.ToString("HH:mm:ss"), "[PYTHON WATCHER] Python script / Conda environment execution detected");
+                        TriggerChannel("SKILLS", DateTime.Now.ToString("HH:mm:ss"), "[PYTHON WATCHER] Python script / Conda environment execution detected", appendToHistory: true);
                     }
                     _lastPythonMtime = fi.LastWriteTime;
                 }
             }
         }
 
-        public void TriggerChannel(string channel, string time, string detail)
+        public void TriggerChannel(string channel, string time, string detail, bool appendToHistory = true)
         {
             _eventCount++;
             TxtCounter.Text = $"EVENTS: {_eventCount}";
@@ -480,11 +540,18 @@ namespace MetropolisHUD
 
             RenderFilteredLogs();
 
-            try
+            if (appendToHistory)
             {
-                File.AppendAllText(HistoryFile, logLine + Environment.NewLine);
+                try
+                {
+                    File.AppendAllText(HistoryFile, logLine + Environment.NewLine);
+                    if (File.Exists(HistoryFile))
+                    {
+                        _lastHistoryPosition = new FileInfo(HistoryFile).Length;
+                    }
+                }
+                catch { }
             }
-            catch { }
 
             // Audio DTC Pulse on ERROR
             if (channel == "ERROR" || channel == "FAIL")
@@ -682,7 +749,7 @@ namespace MetropolisHUD
             Task.Run(async () =>
             {
                 string time = DateTime.Now.ToString("HH:mm:ss");
-                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== INITIALIZING HUD DIAGNOSTIC SELF-TEST SUITE ==="));
+                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== INITIALIZING HUD DIAGNOSTIC SELF-TEST SUITE ===", appendToHistory: true));
                 await Task.Delay(100);
 
                 string[] channels = { "THOUGHT", "DUCKDB", "EDGE", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR" };
@@ -690,17 +757,17 @@ namespace MetropolisHUD
                 {
                     time = DateTime.Now.ToString("HH:mm:ss");
                     string detail = $"[TEST PASS 1/2] Channel signal verification [{ch}] - LED pulse & buffer write";
-                    Dispatcher.Invoke(() => TriggerChannel(ch, time, detail));
+                    Dispatcher.Invoke(() => TriggerChannel(ch, time, detail, appendToHistory: true));
                     await Task.Delay(120);
                 }
 
                 // Pass 2: High-velocity EPM pulse burst & DTC verification
                 time = DateTime.Now.ToString("HH:mm:ss");
-                Dispatcher.Invoke(() => TriggerChannel("ERROR", time, "DTC-0xTEST001: Diagnostics self-test error chime & red LED hold verification"));
+                Dispatcher.Invoke(() => TriggerChannel("ERROR", time, "DTC-0xTEST001: Diagnostics self-test error chime & red LED hold verification", appendToHistory: true));
                 await Task.Delay(200);
 
                 time = DateTime.Now.ToString("HH:mm:ss");
-                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== DIAGNOSTIC SELF-TEST COMPLETED: 9/9 CHANNELS VERIFIED OK ==="));
+                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== DIAGNOSTIC SELF-TEST COMPLETED: 9/9 CHANNELS VERIFIED OK ===", appendToHistory: true));
             });
         }
 
