@@ -1,78 +1,97 @@
 <Window x:Class="MetropolisHUD.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="METROPOLIS TELEMETRY HUD" Height="360" Width="680"
+        Title="METROPOLIS TELEMETRY HUD" Height="380" Width="700"
         Topmost="True" ShowInTaskbar="True" WindowStartupLocation="CenterScreen"
         Background="#11111B" Loaded="Window_Loaded" Closing="Window_Closing">
     
     <Grid Background="#11111B">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/> <!-- Header & 9-LED Matrix -->
+            <RowDefinition Height="Auto"/> <!-- Header -->
+            <RowDefinition Height="Auto"/> <!-- 9-LED Status Bar with Labels -->
             <RowDefinition Height="*"/>    <!-- Clean Terminal Stream -->
             <RowDefinition Height="Auto"/> <!-- Footer Telemetry Bar -->
         </Grid.RowDefinitions>
 
-        <!-- Top Header & 9-LED Status Bar -->
-        <Border Grid.Row="0" Background="#181825" Padding="8,6" BorderBrush="#313244" BorderThickness="0,0,0,1">
+        <!-- Top Header Bar -->
+        <Border Grid.Row="0" Background="#181825" Padding="10,6" BorderBrush="#313244" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse Width="10" Height="10" Fill="#CBA6F7" Margin="0,0,6,0"/>
-                    <TextBlock Text="METROPOLIS TELEMETRY HUD" Foreground="#CDD6F4" FontWeight="Bold" FontSize="11" FontFamily="Consolas"/>
-                    <Border x:Name="BadgeClickThrough" Background="#313244" CornerRadius="3" Padding="4,1" Margin="8,0,0,0" Visibility="Collapsed">
+                    <Ellipse Width="10" Height="10" Fill="#CBA6F7" Margin="0,0,8,0"/>
+                    <TextBlock Text="METROPOLIS TELEMETRY HUD" Foreground="#CDD6F4" FontWeight="Bold" FontSize="11.5" FontFamily="Consolas"/>
+                    <Border x:Name="BadgeClickThrough" Background="#313244" CornerRadius="3" Padding="4,1" Margin="10,0,0,0" Visibility="Collapsed">
                         <TextBlock Text="PASS-THROUGH (WIN+H)" Foreground="#F9E2AF" FontSize="8" FontFamily="Consolas" FontWeight="Bold"/>
                     </Border>
                 </StackPanel>
 
-                <!-- 9-LED Matrix -->
-                <UniformGrid Grid.Column="1" Columns="9" Margin="12,0">
-                    <Border Background="Transparent" Padding="2" ToolTip="THOUGHT">
-                        <Ellipse x:Name="LedThought" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="DUCKDB">
-                        <Ellipse x:Name="LedDuckDb" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="EDGE">
-                        <Ellipse x:Name="LedEdge" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="MCP">
-                        <Ellipse x:Name="LedMcp" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="SKILLS">
-                        <Ellipse x:Name="LedSkills" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="MUTATE">
-                        <Ellipse x:Name="LedMutate" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="AGENT">
-                        <Ellipse x:Name="LedAgent" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="SEARCH">
-                        <Ellipse x:Name="LedSearch" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                    <Border Background="Transparent" Padding="2" ToolTip="ERROR">
-                        <Ellipse x:Name="LedError" Width="10" Height="10" Fill="#45475A"/>
-                    </Border>
-                </UniformGrid>
-
-                <TextBlock Grid.Column="2" Text="v2.0" Foreground="#6C7086" FontSize="9.5" FontFamily="Consolas" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="9-CHANNEL MATRIX v2.0" Foreground="#6C7086" FontSize="9.5" FontFamily="Consolas" VerticalAlignment="Center"/>
             </Grid>
         </Border>
 
+        <!-- 9-LED Matrix with Crisp Catppuccin Labels -->
+        <Border Grid.Row="1" Background="#181825" Padding="8,6" BorderBrush="#313244" BorderThickness="0,0,0,1">
+            <UniformGrid Columns="9">
+                <StackPanel HorizontalAlignment="Center" ToolTip="THOUGHT">
+                    <Ellipse x:Name="LedThought" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="THOUGHT" Foreground="#CBA6F7" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="DUCKDB">
+                    <Ellipse x:Name="LedDuckDb" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="DUCKDB" Foreground="#A6E3A1" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="EDGE">
+                    <Ellipse x:Name="LedEdge" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="EDGE" Foreground="#89B4FA" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="MCP">
+                    <Ellipse x:Name="LedMcp" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="MCP" Foreground="#FAB387" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="SKILLS">
+                    <Ellipse x:Name="LedSkills" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="SKILLS" Foreground="#F5C2E7" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="MUTATE">
+                    <Ellipse x:Name="LedMutate" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="MUTATE" Foreground="#F9E2AF" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="AGENT">
+                    <Ellipse x:Name="LedAgent" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="AGENT" Foreground="#E78284" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="SEARCH">
+                    <Ellipse x:Name="LedSearch" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="SEARCH" Foreground="#94E2D5" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel HorizontalAlignment="Center" ToolTip="ERROR">
+                    <Ellipse x:Name="LedError" Width="12" Height="12" Fill="#45475A" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Text="ERROR" Foreground="#F38BA8" FontSize="7.5" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </UniformGrid>
+        </Border>
+
         <!-- Clean Terminal Activity Stream -->
-        <Border Grid.Row="1" Background="#11111B" Padding="8,4">
+        <Border Grid.Row="2" Background="#11111B" Padding="10,6">
             <RichTextBox x:Name="RichLog" IsReadOnly="True" Background="Transparent" BorderThickness="0" Foreground="#CDD6F4" FontSize="10.5" FontFamily="Consolas" VerticalScrollBarVisibility="Auto">
                 <FlowDocument x:Name="DocLog" PagePadding="0"/>
             </RichTextBox>
         </Border>
 
         <!-- Footer Telemetry Bar -->
-        <Border Grid.Row="2" Background="#181825" Padding="8,4" BorderBrush="#313244" BorderThickness="0,1,0,0">
+        <Border Grid.Row="3" Background="#181825" Padding="10,5" BorderBrush="#313244" BorderThickness="0,1,0,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -83,8 +102,8 @@
                 <TextBlock x:Name="TxtThoughtTrace" Text="HUD ONLINE: Listening for DuckDB, Edge, MCP, and system activity..." Foreground="#A6ADC8" FontSize="9" FontFamily="Consolas" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
-                    <TextBlock Text="PULSE:" Foreground="#6C7086" FontSize="8.5" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                    <Canvas x:Name="SparklineCanvas" Width="60" Height="14" Background="#11111B" VerticalAlignment="Center"/>
+                    <TextBlock Text="PULSE:" Foreground="#6C7086" FontSize="8.5" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <Canvas x:Name="SparklineCanvas" Width="70" Height="14" Background="#11111B" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <TextBlock Grid.Column="2" x:Name="TxtCounter" Text="EVENTS: 0" Foreground="#89B4FA" FontSize="9" FontFamily="Consolas" FontWeight="Bold" VerticalAlignment="Center"/>
