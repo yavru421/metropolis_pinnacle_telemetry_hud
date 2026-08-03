@@ -1,24 +1,99 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
+using System.Linq;
+using System.Media;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using System.Windows.Threading;
+
+using Color = System.Windows.Media.Color;
+using ColorConverter = System.Windows.Media.ColorConverter;
+using Point = System.Windows.Point;
+using Button = System.Windows.Controls.Button;
+using WinForms = System.Windows.Forms;
 
 namespace MetropolisHUD
 {
+    public struct LogItem
+    {
+        public string Time { get; set; }
+        public string Channel { get; set; }
+        public string Detail { get; set; }
+        public string RawLine { get; set; }
+    }
+
+    public class HudConfig
+    {
+        public double Top { get; set; } = 50;
+        public double Left { get; set; } = 50;
+        public double Width { get; set; } = 720;
+        public double Height { get; set; } = 400;
+        public string Anchor { get; set; } = "CENTER";
+    }
+
     public partial class MainWindow : Window
     {
         private const string SignalFile  = @"C:\Users\John\.gemini\config\hud_signal.json";
         private const string HistoryFile = @"C:\Users\John\.gemini\config\hud_history.log";
         private const string MindDbFile  = @"C:\Users\John\.gemini\config\mind.duckdb";
         private const string AgentsFile  = @"C:\Users\John\.gemini\config\AGENTS.md";
+        private const string ConfigFile  = @"C:\Users\John\.gemini\config\hud_config.json";
+        private const string PipeName    = "MetropolisHUDPipe";
 
+        // Win32 Interop
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll")]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll")]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
+        private const int WS_EX_LAYERED = 0x00080000;
+        private const int WM_HOTKEY = 0x0312;
+
+        private const int HOTKEY_ID_WIN_H = 9001;
+        private const int HOTKEY_ID_CTRL_SHIFT_H = 9002;
+
+        private const uint MOD_NONE = 0x0000;
+        private const uint MOD_CONTROL = 0x0002;
+        private const uint MOD_SHIFT = 0x0004;
+        private const uint MOD_WIN = 0x0008;
+        private const uint VK_H = 0x48;
+
+        private bool _isClickThrough = false;
+        private HwndSource? _hwndSource;
+
+        // System Tray
+        private WinForms.NotifyIcon? _notifyIcon;
+
+        // Named Pipe Server
+        private CancellationTokenSource? _pipeCts;
+
+        // Timers & Mtimes
         private readonly DispatcherTimer _timer;
         private DateTime _lastSignalMtime = DateTime.MinValue;
         private DateTime _lastDuckDbMtime = DateTime.MinValue;
         private DateTime _lastAgentsMtime = DateTime.MinValue;
 
+        // Brushes
         private readonly SolidColorBrush _brushOff     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#45475A"));
         private readonly SolidColorBrush _brushPurple  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CBA6F7")); // THOUGHT
         private readonly SolidColorBrush _brushGreen   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A6E3A1")); // DUCKDB
@@ -41,12 +116,18 @@ namespace MetropolisHUD
         private int _errorTicks = 0;
 
         private int _eventCount = 0;
-        private readonly System.Collections.Generic.List<string> _logEntries = new System.Collections.Generic.List<string>();
+        private readonly List<LogItem> _logEntries = new List<LogItem>();
+        private readonly List<DateTime> _eventTimestamps = new List<DateTime>();
+        private readonly int[] _sparklineBins = new int[12]; // 12 bins for 60 seconds (5s each)
+
+        private string _activeFilter = "ALL";
+        private string _searchText = "";
 
         public MainWindow()
         {
             InitializeComponent();
 
+            LoadConfig();
             LoadPersistentHistory();
 
             _timer = new DispatcherTimer
@@ -55,6 +136,160 @@ namespace MetropolisHUD
             };
             _timer.Tick += Timer_Tick;
             _timer.Start();
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            // Register Win32 Hotkeys
+            IntPtr handle = new WindowInteropHelper(this).Handle;
+            _hwndSource = HwndSource.FromHwnd(handle);
+            _hwndSource?.AddHook(HwndHook);
+
+            RegisterHotKey(handle, HOTKEY_ID_WIN_H, MOD_WIN, VK_H);
+            RegisterHotKey(handle, HOTKEY_ID_CTRL_SHIFT_H, MOD_CONTROL | MOD_SHIFT, VK_H);
+
+            // Init System Tray
+            InitSystemTray();
+
+            // Start Named Pipe Listener Thread
+            _pipeCts = new CancellationTokenSource();
+            Task.Run(() => StartNamedPipeServer(_pipeCts.Token));
+        }
+
+        private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            try
+            {
+                IntPtr handle = new WindowInteropHelper(this).Handle;
+                UnregisterHotKey(handle, HOTKEY_ID_WIN_H);
+                UnregisterHotKey(handle, HOTKEY_ID_CTRL_SHIFT_H);
+                _hwndSource?.RemoveHook(HwndHook);
+
+                _pipeCts?.Cancel();
+                _notifyIcon?.Dispose();
+
+                SaveConfig();
+            }
+            catch { }
+        }
+
+        private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_HOTKEY)
+            {
+                int id = wParam.ToInt32();
+                if (id == HOTKEY_ID_WIN_H)
+                {
+                    ToggleClickThrough();
+                    handled = true;
+                }
+                else if (id == HOTKEY_ID_CTRL_SHIFT_H)
+                {
+                    ToggleVisibility();
+                    handled = true;
+                }
+            }
+            return IntPtr.Zero;
+        }
+
+        private void ToggleClickThrough()
+        {
+            _isClickThrough = !_isClickThrough;
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            int extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+
+            if (_isClickThrough)
+            {
+                SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+                BadgeClickThrough.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle & ~WS_EX_TRANSPARENT);
+                BadgeClickThrough.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void ToggleVisibility()
+        {
+            if (IsVisible)
+            {
+                Hide();
+            }
+            else
+            {
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
+            }
+        }
+
+        private void InitSystemTray()
+        {
+            _notifyIcon = new WinForms.NotifyIcon
+            {
+                Text = "Metropolis Pinnacle Telemetry HUD",
+                Icon = System.Drawing.SystemIcons.Application,
+                Visible = true
+            };
+
+            var contextMenu = new WinForms.ContextMenuStrip();
+            contextMenu.Items.Add("Show HUD", null, (s, e) => { Show(); WindowState = WindowState.Normal; Activate(); });
+            contextMenu.Items.Add("Hide HUD", null, (s, e) => Hide());
+            contextMenu.Items.Add("Toggle Click-Through (Win+H)", null, (s, e) => ToggleClickThrough());
+            contextMenu.Items.Add("Reset Position", null, (s, e) => { Top = 50; Left = 50; SaveConfig(); });
+            contextMenu.Items.Add("Run Self-Test", null, (s, e) => RunSelfTest());
+            contextMenu.Items.Add("-");
+            contextMenu.Items.Add("Exit", null, (s, e) => System.Windows.Application.Current.Shutdown());
+
+            _notifyIcon.ContextMenuStrip = contextMenu;
+            _notifyIcon.DoubleClick += (s, e) => ToggleVisibility();
+        }
+
+        private async Task StartNamedPipeServer(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    using var pipeServer = new NamedPipeServerStream(
+                        PipeName,
+                        PipeDirection.In,
+                        1,
+                        PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous);
+
+                    await pipeServer.WaitForConnectionAsync(token);
+
+                    using var reader = new StreamReader(pipeServer, Encoding.UTF8);
+                    string? line = await reader.ReadLineAsync(token);
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(line);
+                            var root = doc.RootElement;
+                            string channel = root.GetProperty("channel").GetString()?.ToUpper() ?? "MCP";
+                            string detail  = root.GetProperty("detail").GetString() ?? "";
+                            string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
+
+                            Dispatcher.Invoke(() => TriggerChannel(channel, time, detail));
+                        }
+                        catch
+                        {
+                            Dispatcher.Invoke(() => TriggerChannel("MCP", DateTime.Now.ToString("HH:mm:ss"), line));
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch
+                {
+                    await Task.Delay(500, token);
+                }
+            }
         }
 
         private void LoadPersistentHistory()
@@ -69,18 +304,41 @@ namespace MetropolisHUD
                     {
                         if (!string.IsNullOrWhiteSpace(lines[i]))
                         {
-                            _logEntries.Add(lines[i]);
+                            ParseAndAddLogEntry(lines[i]);
                         }
                     }
                     _eventCount = _logEntries.Count;
                     TxtCounter.Text = $"EVENTS: {_eventCount}";
-                    TxtLog.Text = string.Join(Environment.NewLine, _logEntries);
-                    Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => LogScrollViewer.ScrollToEnd()));
+                    RenderFilteredLogs();
                 }
             }
-            catch
+            catch { }
+        }
+
+        private void ParseAndAddLogEntry(string rawLine)
+        {
+            // Format: [19:17:16] ERROR: DTC-0xDEAD404: ...
+            string time = DateTime.Now.ToString("HH:mm:ss");
+            string channel = "THOUGHT";
+            string detail = rawLine;
+
+            int firstBracketClose = rawLine.IndexOf(']');
+            if (firstBracketClose > 1 && rawLine.StartsWith("["))
             {
-                // Silently handle startup file reads
+                time = rawLine.Substring(1, firstBracketClose - 1);
+                string rest = rawLine.Substring(firstBracketClose + 1).Trim();
+                int colonIdx = rest.IndexOf(':');
+                if (colonIdx > 0)
+                {
+                    channel = rest.Substring(0, colonIdx).Trim().ToUpper();
+                    detail = rest.Substring(colonIdx + 1).Trim();
+                }
+            }
+
+            _logEntries.Add(new LogItem { Time = time, Channel = channel, Detail = detail, RawLine = rawLine });
+            if (_logEntries.Count > 200)
+            {
+                _logEntries.RemoveAt(0);
             }
         }
 
@@ -145,34 +403,39 @@ namespace MetropolisHUD
                         _lastAgentsMtime = fi.LastWriteTime;
                     }
                 }
+
+                // Update Sparkline Pulse Meter
+                UpdateSparklinePulse();
             }
-            catch
-            {
-                // Silently handle IO locks
-            }
+            catch { }
         }
 
-        private void TriggerChannel(string channel, string time, string detail)
+        public void TriggerChannel(string channel, string time, string detail)
         {
             _eventCount++;
             TxtCounter.Text = $"EVENTS: {_eventCount}";
+            _eventTimestamps.Add(DateTime.Now);
 
             string logLine = $"[{time}] {channel}: {detail}";
-            _logEntries.Add(logLine);
-            if (_logEntries.Count > 150)
+            var item = new LogItem { Time = time, Channel = channel, Detail = detail, RawLine = logLine };
+            _logEntries.Add(item);
+            if (_logEntries.Count > 200)
             {
                 _logEntries.RemoveAt(0);
             }
-            TxtLog.Text = string.Join(Environment.NewLine, _logEntries);
-            LogScrollViewer.ScrollToEnd();
+
+            RenderFilteredLogs();
 
             try
             {
                 File.AppendAllText(HistoryFile, logLine + Environment.NewLine);
             }
-            catch
+            catch { }
+
+            // Audio DTC Pulse on ERROR
+            if (channel == "ERROR" || channel == "FAIL")
             {
-                // Silently handle history write contention
+                try { SystemSounds.Exclamation.Play(); } catch { }
             }
 
             switch (channel)
@@ -216,6 +479,200 @@ namespace MetropolisHUD
                     _errorTicks = 30; // 3 second hold for errors
                     break;
             }
+        }
+
+        private void FilterButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string filter)
+            {
+                _activeFilter = filter;
+                foreach (var child in FilterPanel.Children)
+                {
+                    if (child is Button b)
+                    {
+                        b.Background = (b.Tag as string == _activeFilter) ? _brushPurple : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#313244"));
+                        b.Foreground = (b.Tag as string == _activeFilter) ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#11111B")) : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CDD6F4"));
+                    }
+                }
+                RenderFilteredLogs();
+            }
+        }
+
+        private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            _searchText = TxtSearch.Text.Trim();
+            RenderFilteredLogs();
+        }
+
+        private void RenderFilteredLogs()
+        {
+            DocLog.Blocks.Clear();
+            Paragraph p = new Paragraph();
+
+            var filtered = _logEntries.Where(item =>
+            {
+                bool matchFilter = (_activeFilter == "ALL") || (item.Channel.Equals(_activeFilter, StringComparison.OrdinalIgnoreCase));
+                bool matchSearch = string.IsNullOrEmpty(_searchText) || item.RawLine.Contains(_searchText, StringComparison.OrdinalIgnoreCase);
+                return matchFilter && matchSearch;
+            }).ToList();
+
+            foreach (var item in filtered)
+            {
+                // Timestamp in gray
+                Run runTime = new Run($"[{item.Time}] ") { Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#6C7086")) };
+                p.Inlines.Add(runTime);
+
+                // Badge in channel color
+                SolidColorBrush channelBrush = item.Channel switch
+                {
+                    "THOUGHT" => _brushPurple,
+                    "DUCKDB"  => _brushGreen,
+                    "EDGE"    => _brushCyan,
+                    "MCP"     => _brushOrange,
+                    "SKILLS"  => _brushMagenta,
+                    "MUTATE"  => _brushGold,
+                    "AGENT"   => _brushCoral,
+                    "SEARCH"  => _brushTeal,
+                    "ERROR"   => _brushRed,
+                    "FAIL"    => _brushRed,
+                    _         => _brushPurple
+                };
+
+                Run runChannel = new Run($"{item.Channel}: ") { Foreground = channelBrush, FontWeight = FontWeights.Bold };
+                p.Inlines.Add(runChannel);
+
+                // Detail text
+                Run runDetail = new Run(item.Detail + "\n") { Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CDD6F4")) };
+                p.Inlines.Add(runDetail);
+            }
+
+            DocLog.Blocks.Add(p);
+            RichLog.ScrollToEnd();
+        }
+
+        private void UpdateSparklinePulse()
+        {
+            DateTime now = DateTime.Now;
+            _eventTimestamps.RemoveAll(ts => (now - ts).TotalSeconds > 60);
+
+            int epm = _eventTimestamps.Count;
+            TxtEpm.Text = $"{epm} EPM";
+
+            // Bin events into 12 5-second intervals over the last 60 seconds
+            Array.Clear(_sparklineBins, 0, _sparklineBins.Length);
+            foreach (var ts in _eventTimestamps)
+            {
+                double ageSec = (now - ts).TotalSeconds;
+                int binIndex = 11 - (int)(ageSec / 5.0);
+                if (binIndex >= 0 && binIndex < 12)
+                {
+                    _sparklineBins[binIndex]++;
+                }
+            }
+
+            SparklineCanvas.Children.Clear();
+            double width = SparklineCanvas.Width;
+            double height = SparklineCanvas.Height;
+
+            int maxCount = Math.Max(1, _sparklineBins.Max());
+            PointCollection points = new PointCollection();
+
+            for (int i = 0; i < 12; i++)
+            {
+                double x = (i / 11.0) * width;
+                double y = height - ((double)_sparklineBins[i] / maxCount * (height - 4)) - 2;
+                points.Add(new Point(x, y));
+            }
+
+            Polyline polyline = new Polyline
+            {
+                Points = points,
+                Stroke = _brushCyan,
+                StrokeThickness = 1.5
+            };
+
+            SparklineCanvas.Children.Add(polyline);
+        }
+
+        private void BtnSnapTR_Click(object sender, RoutedEventArgs e)
+        {
+            var workArea = SystemParameters.WorkArea;
+            Left = workArea.Right - Width - 10;
+            Top = workArea.Top + 10;
+            SaveConfig();
+        }
+
+        private void BtnSnapBR_Click(object sender, RoutedEventArgs e)
+        {
+            var workArea = SystemParameters.WorkArea;
+            Left = workArea.Right - Width - 10;
+            Top = workArea.Bottom - Height - 10;
+            SaveConfig();
+        }
+
+        private void BtnSnapTL_Click(object sender, RoutedEventArgs e)
+        {
+            var workArea = SystemParameters.WorkArea;
+            Left = workArea.Left + 10;
+            Top = workArea.Top + 10;
+            SaveConfig();
+        }
+
+        private void BtnSelfTest_Click(object sender, RoutedEventArgs e)
+        {
+            RunSelfTest();
+        }
+
+        public void RunSelfTest()
+        {
+            Task.Run(async () =>
+            {
+                string[] channels = { "THOUGHT", "DUCKDB", "EDGE", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR" };
+                foreach (string ch in channels)
+                {
+                    string time = DateTime.Now.ToString("HH:mm:ss");
+                    string detail = $"SELF-TEST SEQUENCE: Validating channel signal [{ch}]";
+                    Dispatcher.Invoke(() => TriggerChannel(ch, time, detail));
+                    await Task.Delay(150);
+                }
+            });
+        }
+
+        private void LoadConfig()
+        {
+            try
+            {
+                if (File.Exists(ConfigFile))
+                {
+                    string json = File.ReadAllText(ConfigFile);
+                    var cfg = JsonSerializer.Deserialize<HudConfig>(json);
+                    if (cfg != null)
+                    {
+                        Top = cfg.Top;
+                        Left = cfg.Left;
+                        Width = cfg.Width;
+                        Height = cfg.Height;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SaveConfig()
+        {
+            try
+            {
+                var cfg = new HudConfig
+                {
+                    Top = Top,
+                    Left = Left,
+                    Width = Width,
+                    Height = Height
+                };
+                string json = JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(ConfigFile, json);
+            }
+            catch { }
         }
     }
 }
