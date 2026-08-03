@@ -4,6 +4,24 @@
         Title="METROPOLIS PINNACLE TELEMETRY HUD" Height="400" Width="720"
         Topmost="True" ShowInTaskbar="True" WindowStartupLocation="CenterScreen"
         Background="#11111B" Loaded="Window_Loaded" Closing="Window_Closing">
+    
+    <Window.Resources>
+        <Style x:Key="FilterBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#CDD6F4"/>
+            <Setter Property="FontSize" Value="8.5"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#45475A"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
     <Grid Background="#11111B">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <!-- Header -->
@@ -167,21 +185,4 @@
             </Grid>
         </Border>
     </Grid>
-
-    <Window.Resources>
-        <Style x:Key="FilterBtnStyle" TargetType="Button">
-            <Setter Property="Background" Value="#313244"/>
-            <Setter Property="Foreground" Value="#CDD6F4"/>
-            <Setter Property="FontSize" Value="8.5"/>
-            <Setter Property="FontFamily" Value="Consolas"/>
-            <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Padding" Value="6,2"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#45475A"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-    </Window.Resources>
 </Window>
