@@ -37,9 +37,8 @@ namespace MetropolisHUD
     {
         public double Top { get; set; } = 50;
         public double Left { get; set; } = 50;
-        public double Width { get; set; } = 720;
-        public double Height { get; set; } = 400;
-        public string Anchor { get; set; } = "CENTER";
+        public double Width { get; set; } = 680;
+        public double Height { get; set; } = 360;
     }
 
     public partial class MainWindow : Window
@@ -78,7 +77,6 @@ namespace MetropolisHUD
         private const int HOTKEY_ID_WIN_H = 9001;
         private const int HOTKEY_ID_CTRL_SHIFT_H = 9002;
 
-        private const uint MOD_NONE = 0x0000;
         private const uint MOD_CONTROL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
         private const uint MOD_WIN = 0x0008;
@@ -86,14 +84,9 @@ namespace MetropolisHUD
 
         private bool _isClickThrough = false;
         private HwndSource? _hwndSource;
-
-        // System Tray
         private WinForms.NotifyIcon? _notifyIcon;
-
-        // Named Pipe Server
         private CancellationTokenSource? _pipeCts;
 
-        // Timers & Mtimes
         private readonly DispatcherTimer _timer;
         private DateTime _lastSignalMtime = DateTime.MinValue;
         private DateTime _lastDuckDbMtime = DateTime.MinValue;
@@ -103,7 +96,7 @@ namespace MetropolisHUD
         private DateTime _lastPythonMtime = DateTime.MinValue;
         private long _lastHistoryPosition = 0;
 
-        // Brushes
+        // Catppuccin Macchiato Palette Brushes
         private readonly SolidColorBrush _brushOff     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#45475A"));
         private readonly SolidColorBrush _brushPurple  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CBA6F7")); // THOUGHT
         private readonly SolidColorBrush _brushGreen   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A6E3A1")); // DUCKDB
@@ -128,10 +121,6 @@ namespace MetropolisHUD
         private int _eventCount = 0;
         private readonly List<LogItem> _logEntries = new List<LogItem>();
         private readonly List<DateTime> _eventTimestamps = new List<DateTime>();
-        private readonly int[] _sparklineBins = new int[12]; // 12 bins for 60 seconds (5s each)
-
-        private string _activeFilter = "ALL";
-        private string _searchText = "";
 
         public MainWindow()
         {
@@ -150,7 +139,6 @@ namespace MetropolisHUD
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // Register Win32 Hotkeys
             IntPtr handle = new WindowInteropHelper(this).Handle;
             _hwndSource = HwndSource.FromHwnd(handle);
             _hwndSource?.AddHook(HwndHook);
@@ -158,7 +146,6 @@ namespace MetropolisHUD
             RegisterHotKey(handle, HOTKEY_ID_WIN_H, MOD_WIN, VK_H);
             RegisterHotKey(handle, HOTKEY_ID_CTRL_SHIFT_H, MOD_CONTROL | MOD_SHIFT, VK_H);
 
-            // Force Window to Foreground & Topmost
             Topmost = true;
             Activate();
             Focus();
@@ -169,10 +156,8 @@ namespace MetropolisHUD
             }
             catch { }
 
-            // Init System Tray
             InitSystemTray();
 
-            // Start Named Pipe Listener Thread
             _pipeCts = new CancellationTokenSource();
             Task.Run(() => StartNamedPipeServer(_pipeCts.Token));
         }
@@ -249,7 +234,7 @@ namespace MetropolisHUD
         {
             _notifyIcon = new WinForms.NotifyIcon
             {
-                Text = "Metropolis Pinnacle Telemetry HUD",
+                Text = "Metropolis Telemetry HUD",
                 Icon = System.Drawing.SystemIcons.Application,
                 Visible = true
             };
@@ -257,9 +242,8 @@ namespace MetropolisHUD
             var contextMenu = new WinForms.ContextMenuStrip();
             contextMenu.Items.Add("Show HUD", null, (s, e) => { Show(); WindowState = WindowState.Normal; Activate(); });
             contextMenu.Items.Add("Hide HUD", null, (s, e) => Hide());
-            contextMenu.Items.Add("Toggle Click-Through (Win+H)", null, (s, e) => ToggleClickThrough());
+            contextMenu.Items.Add("Toggle Pass-Through (Win+H)", null, (s, e) => ToggleClickThrough());
             contextMenu.Items.Add("Reset Position", null, (s, e) => { Top = 50; Left = 50; SaveConfig(); });
-            contextMenu.Items.Add("Run Self-Test", null, (s, e) => RunSelfTest());
             contextMenu.Items.Add("-");
             contextMenu.Items.Add("Exit", null, (s, e) => System.Windows.Application.Current.Shutdown());
 
@@ -333,7 +317,7 @@ namespace MetropolisHUD
                     }
                     _eventCount = _logEntries.Count;
                     TxtCounter.Text = $"EVENTS: {_eventCount}";
-                    RenderFilteredLogs();
+                    RenderLogs();
                 }
             }
             catch { }
@@ -423,7 +407,7 @@ namespace MetropolisHUD
         {
             try
             {
-                // Decay LED flashes
+                // LED Decay
                 if (_thoughtTicks > 0) { _thoughtTicks--; if (_thoughtTicks == 0) LedThought.Fill = _brushOff; }
                 if (_duckDbTicks > 0)  { _duckDbTicks--;  if (_duckDbTicks == 0)  LedDuckDb.Fill  = _brushOff; }
                 if (_edgeTicks > 0)    { _edgeTicks--;    if (_edgeTicks == 0)    LedEdge.Fill    = _brushOff; }
@@ -434,68 +418,59 @@ namespace MetropolisHUD
                 if (_searchTicks > 0)  { _searchTicks--;  if (_searchTicks == 0)  LedSearch.Fill  = _brushOff; }
                 if (_errorTicks > 0)   { _errorTicks--;   if (_errorTicks == 0)   LedError.Fill   = _brushOff; }
 
-                // 1. Check Append-Only History Stream
                 CheckHistoryLogStream();
-
-                // 2. Check Signal JSON Bus (legacy compatibility)
-                if (File.Exists(SignalFile))
-                {
-                    var fi = new FileInfo(SignalFile);
-                    if (fi.LastWriteTime > _lastSignalMtime)
-                    {
-                        _lastSignalMtime = fi.LastWriteTime;
-                        string json = File.ReadAllText(SignalFile);
-                        using var doc = JsonDocument.Parse(json);
-                        var root = doc.RootElement;
-
-                        string channel = root.GetProperty("channel").GetString()?.ToUpper() ?? "";
-                        string detail  = root.GetProperty("detail").GetString() ?? "";
-                        string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
-
-                        TriggerChannel(channel, time, detail, appendToHistory: true);
-                    }
-                }
-
-                // 3. Check DuckDB mtime
-                if (File.Exists(MindDbFile))
-                {
-                    var fi = new FileInfo(MindDbFile);
-                    if (fi.LastWriteTime > _lastDuckDbMtime)
-                    {
-                        if (_lastDuckDbMtime != DateTime.MinValue)
-                        {
-                            TriggerChannel("DUCKDB", DateTime.Now.ToString("HH:mm:ss"), "mind.duckdb query/write event", appendToHistory: true);
-                        }
-                        _lastDuckDbMtime = fi.LastWriteTime;
-                    }
-                }
-
-                // 4. Check AGENTS.md mtime
-                if (File.Exists(AgentsFile))
-                {
-                    var fi = new FileInfo(AgentsFile);
-                    if (fi.LastWriteTime > _lastAgentsMtime)
-                    {
-                        if (_lastAgentsMtime != DateTime.MinValue)
-                        {
-                            TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "AGENTS.md invariant updated", appendToHistory: true);
-                        }
-                        _lastAgentsMtime = fi.LastWriteTime;
-                    }
-                }
-
-                // 5. Host System Activity Watchers (Git, .NET, Python/Conda)
-                CheckSystemWatchers();
-
-                // Update Sparkline Pulse Meter
+                CheckSignalJson();
+                CheckFileWatchers();
                 UpdateSparklinePulse();
             }
             catch { }
         }
 
-        private void CheckSystemWatchers()
+        private void CheckSignalJson()
         {
-            // 1. Git Repository HEAD Watcher
+            if (File.Exists(SignalFile))
+            {
+                var fi = new FileInfo(SignalFile);
+                if (fi.LastWriteTime > _lastSignalMtime)
+                {
+                    _lastSignalMtime = fi.LastWriteTime;
+                    string json = File.ReadAllText(SignalFile);
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    string channel = root.GetProperty("channel").GetString()?.ToUpper() ?? "";
+                    string detail  = root.GetProperty("detail").GetString() ?? "";
+                    string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
+
+                    TriggerChannel(channel, time, detail, appendToHistory: true);
+                }
+            }
+        }
+
+        private void CheckFileWatchers()
+        {
+            if (File.Exists(MindDbFile))
+            {
+                var fi = new FileInfo(MindDbFile);
+                if (fi.LastWriteTime > _lastDuckDbMtime)
+                {
+                    if (_lastDuckDbMtime != DateTime.MinValue)
+                        TriggerChannel("DUCKDB", DateTime.Now.ToString("HH:mm:ss"), "mind.duckdb telemetry database modified", appendToHistory: true);
+                    _lastDuckDbMtime = fi.LastWriteTime;
+                }
+            }
+
+            if (File.Exists(AgentsFile))
+            {
+                var fi = new FileInfo(AgentsFile);
+                if (fi.LastWriteTime > _lastAgentsMtime)
+                {
+                    if (_lastAgentsMtime != DateTime.MinValue)
+                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "AGENTS.md invariant file modified", appendToHistory: true);
+                    _lastAgentsMtime = fi.LastWriteTime;
+                }
+            }
+
             string gitHead = @"C:\dev\MetropolisHUD\.git\HEAD";
             if (File.Exists(gitHead))
             {
@@ -503,40 +478,8 @@ namespace MetropolisHUD
                 if (fi.LastWriteTime > _lastGitMtime)
                 {
                     if (_lastGitMtime != DateTime.MinValue)
-                    {
-                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[GIT WATCHER] Git repository state / HEAD commit update detected", appendToHistory: true);
-                    }
+                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[GIT] Repository commit update detected", appendToHistory: true);
                     _lastGitMtime = fi.LastWriteTime;
-                }
-            }
-
-            // 2. .NET Build Output Watcher
-            string dotnetDll = @"C:\dev\MetropolisHUD\bin\Debug\net10.0-windows\MetropolisHUD.dll";
-            if (File.Exists(dotnetDll))
-            {
-                var fi = new FileInfo(dotnetDll);
-                if (fi.LastWriteTime > _lastDotnetMtime)
-                {
-                    if (_lastDotnetMtime != DateTime.MinValue)
-                    {
-                        TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), "[.NET WATCHER] .NET Assembly compilation target updated (MetropolisHUD.dll)", appendToHistory: true);
-                    }
-                    _lastDotnetMtime = fi.LastWriteTime;
-                }
-            }
-
-            // 3. Python / Conda Telemetry Watcher
-            string pyTestFile = @"C:\dev\MetropolisHUD\test_pipe.py";
-            if (File.Exists(pyTestFile))
-            {
-                var fi = new FileInfo(pyTestFile);
-                if (fi.LastWriteTime > _lastPythonMtime)
-                {
-                    if (_lastPythonMtime != DateTime.MinValue)
-                    {
-                        TriggerChannel("SKILLS", DateTime.Now.ToString("HH:mm:ss"), "[PYTHON WATCHER] Python script / Conda environment execution detected", appendToHistory: true);
-                    }
-                    _lastPythonMtime = fi.LastWriteTime;
                 }
             }
         }
@@ -555,7 +498,7 @@ namespace MetropolisHUD
                 _logEntries.RemoveAt(0);
             }
 
-            RenderFilteredLogs();
+            RenderLogs();
 
             if (appendToHistory)
             {
@@ -570,7 +513,6 @@ namespace MetropolisHUD
                 catch { }
             }
 
-            // Audio DTC Pulse on ERROR
             if (channel == "ERROR" || channel == "FAIL")
             {
                 try { SystemSounds.Exclamation.Play(); } catch { }
@@ -581,7 +523,7 @@ namespace MetropolisHUD
                 case "THOUGHT":
                     LedThought.Fill = _brushPurple;
                     _thoughtTicks = 15;
-                    TxtThoughtTrace.Text = $"THOUGHT TRACE: {detail}";
+                    TxtThoughtTrace.Text = $"THOUGHT: {detail}";
                     break;
                 case "DUCKDB":
                     LedDuckDb.Fill = _brushGreen;
@@ -614,53 +556,21 @@ namespace MetropolisHUD
                 case "ERROR":
                 case "FAIL":
                     LedError.Fill = _brushRed;
-                    _errorTicks = 30; // 3 second hold for errors
+                    _errorTicks = 30;
                     break;
             }
         }
 
-        private void FilterButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button btn && btn.Tag is string filter)
-            {
-                _activeFilter = filter;
-                foreach (var child in FilterPanel.Children)
-                {
-                    if (child is Button b)
-                    {
-                        b.Background = (b.Tag as string == _activeFilter) ? _brushPurple : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#313244"));
-                        b.Foreground = (b.Tag as string == _activeFilter) ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#11111B")) : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CDD6F4"));
-                    }
-                }
-                RenderFilteredLogs();
-            }
-        }
-
-        private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            _searchText = TxtSearch.Text.Trim();
-            RenderFilteredLogs();
-        }
-
-        private void RenderFilteredLogs()
+        private void RenderLogs()
         {
             DocLog.Blocks.Clear();
             Paragraph p = new Paragraph();
 
-            var filtered = _logEntries.Where(item =>
+            foreach (var item in _logEntries)
             {
-                bool matchFilter = (_activeFilter == "ALL") || (item.Channel.Equals(_activeFilter, StringComparison.OrdinalIgnoreCase));
-                bool matchSearch = string.IsNullOrEmpty(_searchText) || item.RawLine.Contains(_searchText, StringComparison.OrdinalIgnoreCase);
-                return matchFilter && matchSearch;
-            }).ToList();
-
-            foreach (var item in filtered)
-            {
-                // Timestamp in gray
                 Run runTime = new Run($"[{item.Time}] ") { Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#6C7086")) };
                 p.Inlines.Add(runTime);
 
-                // Badge in channel color
                 SolidColorBrush channelBrush = item.Channel switch
                 {
                     "THOUGHT" => _brushPurple,
@@ -679,7 +589,6 @@ namespace MetropolisHUD
                 Run runChannel = new Run($"{item.Channel}: ") { Foreground = channelBrush, FontWeight = FontWeights.Bold };
                 p.Inlines.Add(runChannel);
 
-                // Detail text
                 Run runDetail = new Run(item.Detail + "\n") { Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CDD6F4")) };
                 p.Inlines.Add(runDetail);
             }
@@ -693,18 +602,14 @@ namespace MetropolisHUD
             DateTime now = DateTime.Now;
             _eventTimestamps.RemoveAll(ts => (now - ts).TotalSeconds > 60);
 
-            int epm = _eventTimestamps.Count;
-            TxtEpm.Text = $"{epm} EPM";
-
-            // Bin events into 12 5-second intervals over the last 60 seconds
-            Array.Clear(_sparklineBins, 0, _sparklineBins.Length);
+            int[] bins = new int[12];
             foreach (var ts in _eventTimestamps)
             {
                 double ageSec = (now - ts).TotalSeconds;
                 int binIndex = 11 - (int)(ageSec / 5.0);
                 if (binIndex >= 0 && binIndex < 12)
                 {
-                    _sparklineBins[binIndex]++;
+                    bins[binIndex]++;
                 }
             }
 
@@ -712,13 +617,13 @@ namespace MetropolisHUD
             double width = SparklineCanvas.Width;
             double height = SparklineCanvas.Height;
 
-            int maxCount = Math.Max(1, _sparklineBins.Max());
+            int maxCount = Math.Max(1, bins.Max());
             PointCollection points = new PointCollection();
 
             for (int i = 0; i < 12; i++)
             {
                 double x = (i / 11.0) * width;
-                double y = height - ((double)_sparklineBins[i] / maxCount * (height - 4)) - 2;
+                double y = height - ((double)bins[i] / maxCount * (height - 4)) - 2;
                 points.Add(new Point(x, y));
             }
 
@@ -730,62 +635,6 @@ namespace MetropolisHUD
             };
 
             SparklineCanvas.Children.Add(polyline);
-        }
-
-        private void BtnSnapTR_Click(object sender, RoutedEventArgs e)
-        {
-            var workArea = SystemParameters.WorkArea;
-            Left = workArea.Right - Width - 10;
-            Top = workArea.Top + 10;
-            SaveConfig();
-        }
-
-        private void BtnSnapBR_Click(object sender, RoutedEventArgs e)
-        {
-            var workArea = SystemParameters.WorkArea;
-            Left = workArea.Right - Width - 10;
-            Top = workArea.Bottom - Height - 10;
-            SaveConfig();
-        }
-
-        private void BtnSnapTL_Click(object sender, RoutedEventArgs e)
-        {
-            var workArea = SystemParameters.WorkArea;
-            Left = workArea.Left + 10;
-            Top = workArea.Top + 10;
-            SaveConfig();
-        }
-
-        private void BtnSelfTest_Click(object sender, RoutedEventArgs e)
-        {
-            RunSelfTest();
-        }
-
-        public void RunSelfTest()
-        {
-            Task.Run(async () =>
-            {
-                string time = DateTime.Now.ToString("HH:mm:ss");
-                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== INITIALIZING HUD DIAGNOSTIC SELF-TEST SUITE ===", appendToHistory: true));
-                await Task.Delay(100);
-
-                string[] channels = { "THOUGHT", "DUCKDB", "EDGE", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR" };
-                foreach (string ch in channels)
-                {
-                    time = DateTime.Now.ToString("HH:mm:ss");
-                    string detail = $"[TEST PASS 1/2] Channel signal verification [{ch}] - LED pulse & buffer write";
-                    Dispatcher.Invoke(() => TriggerChannel(ch, time, detail, appendToHistory: true));
-                    await Task.Delay(120);
-                }
-
-                // Pass 2: High-velocity EPM pulse burst & DTC verification
-                time = DateTime.Now.ToString("HH:mm:ss");
-                Dispatcher.Invoke(() => TriggerChannel("ERROR", time, "DTC-0xTEST001: Diagnostics self-test error chime & red LED hold verification", appendToHistory: true));
-                await Task.Delay(200);
-
-                time = DateTime.Now.ToString("HH:mm:ss");
-                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", time, "=== DIAGNOSTIC SELF-TEST COMPLETED: 9/9 CHANNELS VERIFIED OK ===", appendToHistory: true));
-            });
         }
 
         private void LoadConfig()
