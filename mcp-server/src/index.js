@@ -6,10 +6,19 @@ import fs from "fs";
 const SIGNAL_FILE  = "C:\\Users\\John\\.gemini\\config\\hud_signal.json";
 const HISTORY_FILE = "C:\\Users\\John\\.gemini\\config\\hud_history.log";
 
+let lastSignalMap = new Map();
+
 function emitSignal(channel, detail) {
   const timestamp = new Date().toLocaleTimeString("en-US", { hour12: false });
   const cleanChannel = channel.toUpperCase();
   const cleanDetail = detail || `Active execution on ${cleanChannel}`;
+
+  const now = Date.now();
+  const lastTime = lastSignalMap.get(cleanChannel) || 0;
+  if (now - lastTime < 200) {
+    return;
+  }
+  lastSignalMap.set(cleanChannel, now);
 
   const signal = {
     timestamp: timestamp,
@@ -45,18 +54,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "update_hud",
-        description: "Directly update the Metropolis Telemetry HUD GUI window and light up the specified channel LED.",
+        description: "Directly update the Metropolis Telemetry HUD GUI window and light up the specified channel LED.\n\nTool Mapping Rule:\n- workspace_duckdb_query -> DUCKDB\n- run_edge_inference / orchestrator_chat -> EDGE\n- view_file / list_dir / grep_search -> MCP\n- write_to_file / multi_replace_file_content / replace_file_content / workspace_fs_mutate -> MUTATE\n- sequentialthinking -> SEQTHINK\n- read_url_content (localhost:7999) -> SEARCH\n- read_url_content (non-local) -> EDGE\n- invoke_subagent -> AGENT\n- workspace_verify_state -> MUTATE\n- wrangler_* -> WRANGLER",
         inputSchema: {
           type: "object",
           properties: {
             channel: {
               type: "string",
-              enum: ["THOUGHT", "DUCKDB", "EDGE", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR"],
+              enum: ["THOUGHT", "SEQTHINK", "DUCKDB", "EDGE", "WRANGLER", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR"],
               description: "The LED channel to flash on the HUD window"
             },
             message: {
               type: "string",
-              description: "Action description message to show in the live activity stream"
+              description: "Action description message to show in the live activity stream. Required: Pass the actual subject of the call — e.g., 'Querying corrections for last 2 hours', 'Firing run_edge_inference task_type: summarize', 'Writing harvest SKILL.md'. Never use generic descriptions or 'Agent transcript step logged' — this is noise."
             }
           },
           required: ["channel", "message"]
@@ -64,18 +73,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "flash_channel",
-        description: "Flash a specific LED channel on the HUD to signal live system activity.",
+        description: "Flash a specific LED channel on the HUD to signal live system activity.\n\nTool Mapping Rule:\n- workspace_duckdb_query -> DUCKDB\n- run_edge_inference / orchestrator_chat -> EDGE\n- view_file / list_dir / grep_search -> MCP\n- write_to_file / multi_replace_file_content / replace_file_content / workspace_fs_mutate -> MUTATE\n- sequentialthinking -> SEQTHINK\n- read_url_content (localhost:7999) -> SEARCH\n- read_url_content (non-local) -> EDGE\n- invoke_subagent -> AGENT\n- workspace_verify_state -> MUTATE\n- wrangler_* -> WRANGLER",
         inputSchema: {
           type: "object",
           properties: {
             channel: {
               type: "string",
-              enum: ["THOUGHT", "DUCKDB", "EDGE", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR"],
+              enum: ["THOUGHT", "SEQTHINK", "DUCKDB", "EDGE", "WRANGLER", "MCP", "SKILLS", "MUTATE", "AGENT", "SEARCH", "ERROR"],
               description: "Channel LED to flash"
             },
             detail: {
               type: "string",
-              description: "Detail payload for ticker"
+              description: "Detail payload for ticker. Required: Pass the actual subject of the call — e.g., 'Querying corrections for last 2 hours', 'Firing run_edge_inference task_type: summarize', 'Writing harvest SKILL.md'. Never use generic descriptions or 'Agent transcript step logged' — this is noise."
             }
           },
           required: ["channel"]

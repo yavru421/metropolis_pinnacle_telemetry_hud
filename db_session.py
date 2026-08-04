@@ -31,6 +31,31 @@ DATABASES = [
     ('mind', MIND_DB),
 ]
 
+import json
+
+def emit_hud_signal(channel: str, detail: str) -> None:
+    signal_file = r"C:\Users\John\.gemini\config\hud_signal.json"
+    history_file = r"C:\Users\John\.gemini\config\hud_history.log"
+    time_str = time.strftime("%H:%M:%S")
+    payload = {
+        "timestamp": time_str,
+        "channel": channel.upper(),
+        "detail": detail
+    }
+    try:
+        with open(signal_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        with open(history_file, "a", encoding="utf-8") as f:
+            f.write(f"[{time_str}] {channel.upper()}: {detail}\n")
+    except Exception:
+        pass
+
+    try:
+        stmt = "INSERT INTO telemetry_events (event_type, event_data, source) VALUES (?, ?, ?);"
+        execute_ephemeral_write(MIND_DB, [stmt], [[channel.upper(), detail, "hud_emitter"]])
+    except Exception:
+        pass
+
 
 def _attach_with_retry(con: duckdb.DuckDBPyConnection, db_path: str, alias: str, max_retries: int = 8, initial_delay: float = 0.05) -> bool:
     """
@@ -366,6 +391,7 @@ def log_prompt_history(original_prompt: str, correction_text: str = None, execut
     """
     Logs user prompt history and corrections into mind.corrections using zero-lock execute_ephemeral_write.
     """
+    emit_hud_signal("DUCKDB", f"mind.corrections write: {(original_prompt or '')[:40]}")
     stmt = """
     INSERT INTO corrections (correction_text, original_prompt, execution_output, metadata)
     VALUES (?, ?, ?, ?);
@@ -377,6 +403,7 @@ def log_execution_metrics(event_type: str, event_data: str, source: str = "agent
     """
     Logs execution metrics and telemetry events into mind.telemetry_events using zero-lock execute_ephemeral_write.
     """
+    emit_hud_signal("DUCKDB", f"mind.telemetry {event_type}: {(event_data or '')[:40]}")
     stmt = """
     INSERT INTO telemetry_events (event_type, event_data, source, metadata)
     VALUES (?, ?, ?, ?);

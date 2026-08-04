@@ -11,3 +11,6 @@ obj/
 # System & DB
 hud_history.log
 hud_signal.json
+.wrangler/
+__pycache__/
+

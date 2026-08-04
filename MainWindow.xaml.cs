@@ -37,8 +37,10 @@ namespace MetropolisHUD
     {
         public double Top { get; set; } = 50;
         public double Left { get; set; } = 50;
-        public double Width { get; set; } = 680;
-        public double Height { get; set; } = 360;
+        public double Width { get; set; } = 960;
+        public double Height { get; set; } = 480;
+        public double BadgeFontSize { get; set; } = 20;
+        public bool IsLogStreamCollapsed { get; set; } = false;
     }
 
     public partial class MainWindow : Window
@@ -86,6 +88,9 @@ namespace MetropolisHUD
         private HwndSource? _hwndSource;
         private WinForms.NotifyIcon? _notifyIcon;
         private CancellationTokenSource? _pipeCts;
+        private FileSystemWatcher? _devWatcher;
+        private FileSystemWatcher? _configWatcher;
+        private FileSystemWatcher? _brainWatcher;
 
         private readonly DispatcherTimer _timer;
         private DateTime _lastSignalMtime = DateTime.MinValue;
@@ -95,22 +100,27 @@ namespace MetropolisHUD
         private DateTime _lastDotnetMtime = DateTime.MinValue;
         private DateTime _lastPythonMtime = DateTime.MinValue;
         private long _lastHistoryPosition = 0;
+        private DateTime _currentLogDate = DateTime.Today;
 
         // Catppuccin Macchiato Palette Brushes
-        private readonly SolidColorBrush _brushOff     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#45475A"));
-        private readonly SolidColorBrush _brushPurple  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CBA6F7")); // THOUGHT
-        private readonly SolidColorBrush _brushGreen   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A6E3A1")); // DUCKDB
-        private readonly SolidColorBrush _brushCyan    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#89B4FA")); // EDGE
-        private readonly SolidColorBrush _brushOrange  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FAB387")); // MCP
-        private readonly SolidColorBrush _brushMagenta = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F5C2E7")); // SKILLS
-        private readonly SolidColorBrush _brushGold    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F9E2AF")); // MUTATE
-        private readonly SolidColorBrush _brushCoral   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E78284")); // AGENT
-        private readonly SolidColorBrush _brushTeal    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94E2D5")); // SEARCH
-        private readonly SolidColorBrush _brushRed     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F38BA8")); // ERROR
+        private readonly SolidColorBrush _brushOff      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#45475A"));
+        private readonly SolidColorBrush _brushPurple   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CBA6F7")); // THOUGHT
+        private readonly SolidColorBrush _brushLavender = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B4BEFE")); // SEQTHINK
+        private readonly SolidColorBrush _brushGreen    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A6E3A1")); // DUCKDB
+        private readonly SolidColorBrush _brushCyan     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#89B4FA")); // EDGE
+        private readonly SolidColorBrush _brushYellow   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F9E2AF")); // WRANGLER
+        private readonly SolidColorBrush _brushOrange   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FAB387")); // MCP
+        private readonly SolidColorBrush _brushMagenta  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F5C2E7")); // SKILLS
+        private readonly SolidColorBrush _brushMaroon   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EBA0AC")); // MUTATE
+        private readonly SolidColorBrush _brushCoral    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E78284")); // AGENT
+        private readonly SolidColorBrush _brushTeal     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94E2D5")); // SEARCH
+        private readonly SolidColorBrush _brushRed      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F38BA8")); // ERROR
 
         private int _thoughtTicks = 0;
+        private int _seqthinkTicks = 0;
         private int _duckDbTicks = 0;
         private int _edgeTicks = 0;
+        private int _wranglerTicks = 0;
         private int _mcpTicks = 0;
         private int _skillsTicks = 0;
         private int _mutateTicks = 0;
@@ -137,6 +147,8 @@ namespace MetropolisHUD
             _timer.Start();
         }
 
+
+
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             IntPtr handle = new WindowInteropHelper(this).Handle;
@@ -145,6 +157,12 @@ namespace MetropolisHUD
 
             RegisterHotKey(handle, HOTKEY_ID_WIN_H, MOD_WIN, VK_H);
             RegisterHotKey(handle, HOTKEY_ID_CTRL_SHIFT_H, MOD_CONTROL | MOD_SHIFT, VK_H);
+
+            MouseDown += (s, ev) =>
+            {
+                if (ev.ChangedButton == System.Windows.Input.MouseButton.Left)
+                    DragMove();
+            };
 
             Topmost = true;
             Activate();
@@ -160,6 +178,152 @@ namespace MetropolisHUD
 
             _pipeCts = new CancellationTokenSource();
             Task.Run(() => StartNamedPipeServer(_pipeCts.Token));
+            InitFileSystemWatchers();
+        }
+
+        private void InitFileSystemWatchers()
+        {
+            try
+            {
+                if (Directory.Exists(@"C:\dev"))
+                {
+                    _devWatcher = new FileSystemWatcher(@"C:\dev")
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                        Filter = "*.*",
+                        EnableRaisingEvents = true
+                    };
+                    _devWatcher.Changed += OnDevFileChanged;
+                    _devWatcher.Created += OnDevFileChanged;
+                }
+
+                string configDir = @"C:\Users\John\.gemini\config";
+                if (Directory.Exists(configDir))
+                {
+                    _configWatcher = new FileSystemWatcher(configDir)
+                    {
+                        IncludeSubdirectories = false,
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                        Filter = "*.*",
+                        EnableRaisingEvents = true
+                    };
+                    _configWatcher.Changed += OnConfigDirectoryChanged;
+                    _configWatcher.Created += OnConfigDirectoryChanged;
+                }
+
+                string brainDir = @"C:\Users\John\.gemini\antigravity\brain";
+                if (Directory.Exists(brainDir))
+                {
+                    _brainWatcher = new FileSystemWatcher(brainDir)
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                        Filter = "*.jsonl",
+                        EnableRaisingEvents = true
+                    };
+                    _brainWatcher.Changed += OnBrainDirectoryChanged;
+                    _brainWatcher.Created += OnBrainDirectoryChanged;
+                }
+            }
+            catch { }
+        }
+
+        private void OnDevFileChanged(object sender, FileSystemEventArgs e)
+        {
+            string ext = System.IO.Path.GetExtension(e.FullPath).ToLower();
+            string name = e.Name ?? "";
+            if (name.Contains("hud_signal.json") || name.Contains("hud_history.log") || name.Contains(".git") || name.Contains("obj") || name.Contains("bin"))
+                return;
+
+            if (ext == ".cs" || ext == ".py" || ext == ".json" || ext == ".js" || ext == ".ts" || ext == ".md")
+            {
+                Dispatcher.Invoke(() => TriggerChannel("MUTATE", DateTime.Now.ToString("HH:mm:ss"), $"{e.ChangeType}: {System.IO.Path.GetFileName(e.FullPath)}", appendToHistory: false));
+            }
+        }
+
+        private void OnConfigDirectoryChanged(object sender, FileSystemEventArgs e)
+        {
+            string name = e.Name ?? "";
+            if (name.EndsWith(".duckdb") || name.EndsWith(".duckdb-wal"))
+            {
+                Dispatcher.Invoke(() => TriggerChannel("DUCKDB", DateTime.Now.ToString("HH:mm:ss"), $"Database update: {name}", appendToHistory: false));
+            }
+            else if (name.Equals("AGENTS.md", StringComparison.OrdinalIgnoreCase))
+            {
+                Dispatcher.Invoke(() => TriggerChannel("AGENT", DateTime.Now.ToString("HH:mm:ss"), "AGENTS.md updated", appendToHistory: false));
+            }
+        }
+
+        private void OnBrainDirectoryChanged(object sender, FileSystemEventArgs e)
+        {
+            try
+            {
+                if (!e.FullPath.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                string channel = "THOUGHT";
+                string detail = "Agent transcript step logged";
+
+                using (var fs = new FileStream(e.FullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(fs, Encoding.UTF8))
+                {
+                    string? lastLine = null;
+                    string? line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(line))
+                        {
+                            lastLine = line;
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(lastLine))
+                    {
+                        if (lastLine.Contains("wrangler_"))
+                        {
+                            channel = "WRANGLER";
+                            detail = "Cloudflare Wrangler MCP CLI operations";
+                        }
+                        else if (lastLine.Contains("run_edge_inference") || lastLine.Contains("orchestrator_chat") || lastLine.Contains("cloudflare"))
+                        {
+                            channel = "EDGE";
+                            detail = "Cloudflare Workers AI edge router synthesis";
+                        }
+                        else if (lastLine.Contains("workspace_duckdb_query") || lastLine.Contains("duckdb"))
+                        {
+                            channel = "DUCKDB";
+                            detail = "DuckDB telemetry database query";
+                        }
+                        else if (lastLine.Contains("sequentialthinking"))
+                        {
+                            channel = "SEQTHINK";
+                            detail = "SequentialThinking cognitive trace step";
+                        }
+                        else if (lastLine.Contains("grep_search") || lastLine.Contains("view_file") || lastLine.Contains("list_dir") || lastLine.Contains("read_url"))
+                        {
+                            channel = "SEARCH";
+                            detail = "Workspace search & inspection tool";
+                        }
+                        else if (lastLine.Contains("replace_file_content") || lastLine.Contains("multi_replace_file_content") || lastLine.Contains("write_to_file") || lastLine.Contains("workspace_fs_mutate") || lastLine.Contains("workspace_verify_state"))
+                        {
+                            channel = "MUTATE";
+                            detail = "Workspace file mutation";
+                        }
+                        else if (lastLine.Contains("run_command") || lastLine.Contains("exec_cmd") || lastLine.Contains("manage_task"))
+                        {
+                            channel = "MCP";
+                            detail = "Process & terminal execution sidecar";
+                        }
+                    }
+                }
+
+                Dispatcher.Invoke(() => TriggerChannel(channel, DateTime.Now.ToString("HH:mm:ss"), detail, appendToHistory: false));
+            }
+            catch
+            {
+                Dispatcher.Invoke(() => TriggerChannel("THOUGHT", DateTime.Now.ToString("HH:mm:ss"), "Agent transcript step logged", appendToHistory: false));
+            }
         }
 
         private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -306,6 +470,15 @@ namespace MetropolisHUD
                     var fi = new FileInfo(HistoryFile);
                     _lastHistoryPosition = fi.Length;
 
+                    if (fi.LastWriteTime.Date < DateTime.Today)
+                    {
+                        _logEntries.Clear();
+                        _eventCount = 0;
+                        TxtCounter.Text = "EVENTS: 0";
+                        RenderLogs();
+                        return;
+                    }
+
                     string[] lines = File.ReadAllLines(HistoryFile);
                     int start = Math.Max(0, lines.Length - 100);
                     for (int i = start; i < lines.Length; i++)
@@ -328,11 +501,22 @@ namespace MetropolisHUD
             string time = DateTime.Now.ToString("HH:mm:ss");
             string channel = "THOUGHT";
             string detail = rawLine;
+            DateTime entryDate = DateTime.Today;
 
             int firstBracketClose = rawLine.IndexOf(']');
             if (firstBracketClose > 1 && rawLine.StartsWith("["))
             {
-                time = rawLine.Substring(1, firstBracketClose - 1);
+                string headerStr = rawLine.Substring(1, firstBracketClose - 1);
+                if (DateTime.TryParse(headerStr, out DateTime parsedDt))
+                {
+                    entryDate = parsedDt.Date;
+                    time = parsedDt.ToString("HH:mm:ss");
+                }
+                else
+                {
+                    time = headerStr;
+                }
+
                 string rest = rawLine.Substring(firstBracketClose + 1).Trim();
                 int colonIdx = rest.IndexOf(':');
                 if (colonIdx > 0)
@@ -340,6 +524,11 @@ namespace MetropolisHUD
                     channel = rest.Substring(0, colonIdx).Trim().ToUpper();
                     detail = rest.Substring(colonIdx + 1).Trim();
                 }
+            }
+
+            if (entryDate != DateTime.Today)
+            {
+                return; // Daily visual ledger reset: filter past dates from visual HUD ledger
             }
 
             _logEntries.Add(new LogItem { Time = time, Channel = channel, Detail = detail, RawLine = rawLine });
@@ -407,16 +596,29 @@ namespace MetropolisHUD
         {
             try
             {
-                // LED Decay
-                if (_thoughtTicks > 0) { _thoughtTicks--; if (_thoughtTicks == 0) LedThought.Fill = _brushOff; }
-                if (_duckDbTicks > 0)  { _duckDbTicks--;  if (_duckDbTicks == 0)  LedDuckDb.Fill  = _brushOff; }
-                if (_edgeTicks > 0)    { _edgeTicks--;    if (_edgeTicks == 0)    LedEdge.Fill    = _brushOff; }
-                if (_mcpTicks > 0)     { _mcpTicks--;     if (_mcpTicks == 0)     LedMcp.Fill     = _brushOff; }
-                if (_skillsTicks > 0)  { _skillsTicks--;  if (_skillsTicks == 0)  LedSkills.Fill  = _brushOff; }
-                if (_mutateTicks > 0)  { _mutateTicks--;  if (_mutateTicks == 0)  LedMutate.Fill  = _brushOff; }
-                if (_agentTicks > 0)   { _agentTicks--;   if (_agentTicks == 0)   LedAgent.Fill   = _brushOff; }
-                if (_searchTicks > 0)  { _searchTicks--;  if (_searchTicks == 0)  LedSearch.Fill  = _brushOff; }
-                if (_errorTicks > 0)   { _errorTicks--;   if (_errorTicks == 0)   LedError.Fill   = _brushOff; }
+                // Midnight rollover check for daily visual ledger reset
+                if (DateTime.Today != _currentLogDate)
+                {
+                    _currentLogDate = DateTime.Today;
+                    _logEntries.Clear();
+                    _eventCount = 0;
+                    TxtCounter.Text = "EVENTS: 0";
+                    ParseAndAddLogEntry($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] AGENT: --- DAILY LEDGER VISUAL RESET ({_currentLogDate:yyyy-MM-dd}) ---");
+                    RenderLogs();
+                }
+
+                // Stealth Badge Opacity Decay (50 ticks = 5 second slow cool-down)
+                if (_thoughtTicks > 0)  { _thoughtTicks--;  BadgeThought.Opacity  = _thoughtTicks / 50.0; }
+                if (_seqthinkTicks > 0){ _seqthinkTicks--; BadgeSeqthink.Opacity = _seqthinkTicks / 50.0; }
+                if (_duckDbTicks > 0)  { _duckDbTicks--;   BadgeDuckDb.Opacity   = _duckDbTicks / 50.0; }
+                if (_edgeTicks > 0)    { _edgeTicks--;     BadgeEdge.Opacity     = _edgeTicks / 50.0; }
+                if (_wranglerTicks > 0){ _wranglerTicks--; BadgeWrangler.Opacity = _wranglerTicks / 50.0; }
+                if (_mcpTicks > 0)     { _mcpTicks--;      BadgeMcp.Opacity      = _mcpTicks / 50.0; }
+                if (_skillsTicks > 0)  { _skillsTicks--;   BadgeSkills.Opacity   = _skillsTicks / 50.0; }
+                if (_mutateTicks > 0)  { _mutateTicks--;   BadgeMutate.Opacity   = _mutateTicks / 50.0; }
+                if (_agentTicks > 0)   { _agentTicks--;    BadgeAgent.Opacity    = _agentTicks / 50.0; }
+                if (_searchTicks > 0)  { _searchTicks--;   BadgeSearch.Opacity   = _searchTicks / 50.0; }
+                if (_errorTicks > 0)   { _errorTicks--;    BadgeError.Opacity    = _errorTicks / 50.0; }
 
                 CheckHistoryLogStream();
                 CheckSignalJson();
@@ -428,23 +630,36 @@ namespace MetropolisHUD
 
         private void CheckSignalJson()
         {
-            if (File.Exists(SignalFile))
+            try
             {
-                var fi = new FileInfo(SignalFile);
-                if (fi.LastWriteTime > _lastSignalMtime)
+                if (File.Exists(SignalFile))
                 {
-                    _lastSignalMtime = fi.LastWriteTime;
-                    string json = File.ReadAllText(SignalFile);
-                    using var doc = JsonDocument.Parse(json);
-                    var root = doc.RootElement;
+                    var fi = new FileInfo(SignalFile);
+                    if (fi.LastWriteTime > _lastSignalMtime)
+                    {
+                        _lastSignalMtime = fi.LastWriteTime;
+                        string json;
+                        using (var stream = new FileStream(SignalFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        using (var reader = new StreamReader(stream, Encoding.UTF8))
+                        {
+                            json = reader.ReadToEnd();
+                        }
 
-                    string channel = root.GetProperty("channel").GetString()?.ToUpper() ?? "";
-                    string detail  = root.GetProperty("detail").GetString() ?? "";
-                    string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
+                        if (!string.IsNullOrWhiteSpace(json))
+                        {
+                            using var doc = JsonDocument.Parse(json);
+                            var root = doc.RootElement;
 
-                    TriggerChannel(channel, time, detail, appendToHistory: true);
+                            string channel = root.GetProperty("channel").GetString()?.ToUpper() ?? "";
+                            string detail  = root.GetProperty("detail").GetString() ?? "";
+                            string time    = root.GetProperty("timestamp").GetString() ?? DateTime.Now.ToString("HH:mm:ss");
+
+                            TriggerChannel(channel, time, detail, appendToHistory: false);
+                        }
+                    }
                 }
             }
+            catch { }
         }
 
         private void CheckFileWatchers()
@@ -504,11 +719,24 @@ namespace MetropolisHUD
             {
                 try
                 {
-                    File.AppendAllText(HistoryFile, logLine + Environment.NewLine);
+                    string fullTimeLogLine = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {channel}: {detail}";
+                    File.AppendAllText(HistoryFile, fullTimeLogLine + Environment.NewLine);
                     if (File.Exists(HistoryFile))
                     {
                         _lastHistoryPosition = new FileInfo(HistoryFile).Length;
                     }
+
+                    // Auto-pipe telemetry into DuckDB JSONL telemetry stream
+                    string jsonlFile = @"C:\Users\John\.gemini\config\hud_telemetry.jsonl";
+                    var jsonObject = new
+                    {
+                        timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                        channel = channel,
+                        detail = detail,
+                        source = "MetropolisHUD"
+                    };
+                    string jsonLine = JsonSerializer.Serialize(jsonObject);
+                    File.AppendAllText(jsonlFile, jsonLine + Environment.NewLine);
                 }
                 catch { }
             }
@@ -521,42 +749,51 @@ namespace MetropolisHUD
             switch (channel)
             {
                 case "THOUGHT":
-                    LedThought.Fill = _brushPurple;
-                    _thoughtTicks = 15;
+                    BadgeThought.Opacity = 1.0;
+                    _thoughtTicks = 50;
                     TxtThoughtTrace.Text = $"THOUGHT: {detail}";
                     break;
+                case "SEQTHINK":
+                    BadgeSeqthink.Opacity = 1.0;
+                    _seqthinkTicks = 50;
+                    TxtThoughtTrace.Text = $"SEQTHINK: {detail}";
+                    break;
                 case "DUCKDB":
-                    LedDuckDb.Fill = _brushGreen;
-                    _duckDbTicks = 15;
+                    BadgeDuckDb.Opacity = 1.0;
+                    _duckDbTicks = 50;
                     break;
                 case "EDGE":
-                    LedEdge.Fill = _brushCyan;
-                    _edgeTicks = 15;
+                    BadgeEdge.Opacity = 1.0;
+                    _edgeTicks = 50;
+                    break;
+                case "WRANGLER":
+                    BadgeWrangler.Opacity = 1.0;
+                    _wranglerTicks = 50;
                     break;
                 case "MCP":
-                    LedMcp.Fill = _brushOrange;
-                    _mcpTicks = 15;
+                    BadgeMcp.Opacity = 1.0;
+                    _mcpTicks = 50;
                     break;
                 case "SKILLS":
-                    LedSkills.Fill = _brushMagenta;
-                    _skillsTicks = 15;
+                    BadgeSkills.Opacity = 1.0;
+                    _skillsTicks = 50;
                     break;
                 case "MUTATE":
-                    LedMutate.Fill = _brushGold;
-                    _mutateTicks = 15;
+                    BadgeMutate.Opacity = 1.0;
+                    _mutateTicks = 50;
                     break;
                 case "AGENT":
-                    LedAgent.Fill = _brushCoral;
-                    _agentTicks = 15;
+                    BadgeAgent.Opacity = 1.0;
+                    _agentTicks = 50;
                     break;
                 case "SEARCH":
-                    LedSearch.Fill = _brushTeal;
-                    _searchTicks = 15;
+                    BadgeSearch.Opacity = 1.0;
+                    _searchTicks = 50;
                     break;
                 case "ERROR":
                 case "FAIL":
-                    LedError.Fill = _brushRed;
-                    _errorTicks = 30;
+                    BadgeError.Opacity = 1.0;
+                    _errorTicks = 75;
                     break;
             }
         }
@@ -573,17 +810,19 @@ namespace MetropolisHUD
 
                 SolidColorBrush channelBrush = item.Channel switch
                 {
-                    "THOUGHT" => _brushPurple,
-                    "DUCKDB"  => _brushGreen,
-                    "EDGE"    => _brushCyan,
-                    "MCP"     => _brushOrange,
-                    "SKILLS"  => _brushMagenta,
-                    "MUTATE"  => _brushGold,
-                    "AGENT"   => _brushCoral,
-                    "SEARCH"  => _brushTeal,
-                    "ERROR"   => _brushRed,
-                    "FAIL"    => _brushRed,
-                    _         => _brushPurple
+                    "THOUGHT"  => _brushPurple,
+                    "SEQTHINK" => _brushLavender,
+                    "DUCKDB"   => _brushGreen,
+                    "EDGE"     => _brushCyan,
+                    "WRANGLER" => _brushYellow,
+                    "MCP"      => _brushOrange,
+                    "SKILLS"   => _brushMagenta,
+                    "MUTATE"   => _brushMaroon,
+                    "AGENT"    => _brushCoral,
+                    "SEARCH"   => _brushTeal,
+                    "ERROR"    => _brushRed,
+                    "FAIL"     => _brushRed,
+                    _          => _brushPurple
                 };
 
                 Run runChannel = new Run($"{item.Channel}: ") { Foreground = channelBrush, FontWeight = FontWeights.Bold };
@@ -637,6 +876,65 @@ namespace MetropolisHUD
             SparklineCanvas.Children.Add(polyline);
         }
 
+
+
+        public double CurrentBadgeFontSize => TxtThought?.FontSize ?? 20;
+        public bool IsLogStreamCollapsed => BorderLogContainer?.Visibility == Visibility.Collapsed;
+
+        public void SetBadgeFontSize(double newSize)
+        {
+            if (TxtThought != null) TxtThought.FontSize = newSize;
+            if (TxtSeqthink != null) TxtSeqthink.FontSize = newSize;
+            if (TxtDuckDb != null) TxtDuckDb.FontSize = newSize;
+            if (TxtEdge != null) TxtEdge.FontSize = newSize;
+            if (TxtWrangler != null) TxtWrangler.FontSize = newSize;
+            if (TxtMcp != null) TxtMcp.FontSize = newSize;
+            if (TxtSkills != null) TxtSkills.FontSize = newSize;
+            if (TxtMutate != null) TxtMutate.FontSize = newSize;
+            if (TxtAgent != null) TxtAgent.FontSize = newSize;
+            if (TxtSearch != null) TxtSearch.FontSize = newSize;
+            if (TxtError != null) TxtError.FontSize = newSize;
+
+            SaveConfig();
+        }
+
+        public void SetLogStreamCollapsed(bool collapsed)
+        {
+            if (BorderLogContainer != null)
+            {
+                BorderLogContainer.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            }
+            if (BtnToggleLogs != null)
+            {
+                BtnToggleLogs.Content = collapsed ? "▲ EXPAND LOGS" : "▼ COLLAPSE LOGS";
+            }
+            SaveConfig();
+        }
+
+        private void BtnToggleLogs_Click(object sender, RoutedEventArgs e)
+        {
+            SetLogStreamCollapsed(!IsLogStreamCollapsed);
+        }
+
+        private void BtnOpenSettingsWindow_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new SettingsWindow(this)
+            {
+                Owner = this
+            };
+            dlg.ShowDialog();
+        }
+
+        private void BtnCloseApp_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        public void SaveCurrentConfig()
+        {
+            SaveConfig();
+        }
+
         private void LoadConfig()
         {
             try
@@ -651,6 +949,8 @@ namespace MetropolisHUD
                         Left = cfg.Left;
                         Width = cfg.Width;
                         Height = cfg.Height;
+                        SetBadgeFontSize(cfg.BadgeFontSize >= 10 && cfg.BadgeFontSize <= 48 ? cfg.BadgeFontSize : 20);
+                        SetLogStreamCollapsed(cfg.IsLogStreamCollapsed);
                     }
                 }
             }
@@ -666,7 +966,9 @@ namespace MetropolisHUD
                     Top = Top,
                     Left = Left,
                     Width = Width,
-                    Height = Height
+                    Height = Height,
+                    BadgeFontSize = CurrentBadgeFontSize,
+                    IsLogStreamCollapsed = IsLogStreamCollapsed
                 };
                 string json = JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(ConfigFile, json);

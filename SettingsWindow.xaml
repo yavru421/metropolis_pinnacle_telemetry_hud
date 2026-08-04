@@ -1,0 +1,62 @@
+<Window x:Class="MetropolisHUD.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Metropolis HUD Settings" Height="320" Width="460"
+        WindowStartupLocation="CenterOwner" Topmost="True" ResizeMode="NoResize"
+        Background="#0F172A">
+    
+    <Border Padding="20" Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                <TextBlock Text="METROPOLIS HUD CONFIGURATION" Foreground="#00F3FF" FontSize="13" FontFamily="Consolas" FontWeight="Black"/>
+                <TextBlock Text="Adjust indicator sizes and log display preferences" Foreground="#64748B" FontSize="9.5" FontFamily="Consolas" Margin="0,2,0,0"/>
+            </StackPanel>
+
+            <!-- Settings Options -->
+            <StackPanel Grid.Row="1" Orientation="Vertical">
+                <!-- Badge Font Size -->
+                <Border Background="#161F30" Padding="12" CornerRadius="6" Margin="0,0,0,12" BorderBrush="#334155" BorderThickness="1">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="CHANNEL BADGE FONT SIZE:" Foreground="#E2E8F0" FontSize="10" FontFamily="Consolas" FontWeight="Bold"/>
+                            <TextBlock x:Name="TxtSettingsBadgeSize" Text="20pt" Foreground="#00F3FF" FontSize="10" FontFamily="Consolas" FontWeight="Bold" Margin="10,0,0,0"/>
+                        </StackPanel>
+                        <Slider Grid.Row="1" x:Name="SliderSettingsBadgeSize" Minimum="10" Maximum="48" Value="20" ValueChanged="SliderSettingsBadgeSize_ValueChanged"/>
+                    </Grid>
+                </Border>
+
+                <!-- Collapse Terminal Stream Option -->
+                <Border Background="#161F30" Padding="12" CornerRadius="6" Margin="0,0,0,12" BorderBrush="#334155" BorderThickness="1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="COLLAPSE TERMINAL LOG STREAM" Foreground="#E2E8F0" FontSize="10" FontFamily="Consolas" FontWeight="Bold"/>
+                            <TextBlock Text="Hide log text list to show only glowing channel badges" Foreground="#64748B" FontSize="8.5" FontFamily="Consolas" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" x:Name="ChkCollapseLogs" Content="COLLAPSE" Foreground="#00F3FF" FontFamily="Consolas" FontWeight="Bold" FontSize="9.5" VerticalAlignment="Center" Checked="ChkCollapseLogs_Changed" Unchecked="ChkCollapseLogs_Changed"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <!-- Save & Close Footer -->
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                <Button Content="CANCEL" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" BorderThickness="1" FontSize="9.5" FontFamily="Consolas" FontWeight="Bold" Padding="12,5" Margin="0,0,8,0" Click="BtnCancel_Click"/>
+                <Button Content="SAVE &amp; CLOSE" Background="#2563EB" Foreground="#FFFFFF" BorderThickness="0" FontSize="9.5" FontFamily="Consolas" FontWeight="Bold" Padding="14,5" Click="BtnSave_Click"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
